@@ -12,9 +12,16 @@ func (mfs *mergeFileStruct) producer(ctx context.Context, srcFileNames []string)
 	wg := mfs.wg
 	lineChan := mfs.lineChan
 	wg.Add(len(srcFileNames))
+	srcFileCnt := len(srcFileNames)
 	for _, srcFileName := range srcFileNames {
 		go func(fileName string) {
-			defer wg.Done()
+			defer func() {
+				wg.Done()
+				mfs.fileReadDoneCnt += 1
+				if mfs.fileReadDoneCnt == srcFileCnt {
+					close(lineChan)
+				}
+			}()
 			file, err := os.Open(fileName) // 打开文件
 			if err != nil {
 				log.Printf("os.Open %v fail, err:%v", fileName, err)
@@ -52,8 +59,9 @@ func (mfs *mergeFileStruct) consumer(ctx context.Context, dstFileName string) {
 }
 
 type mergeFileStruct struct {
-	wg       *sync.WaitGroup // 阻塞主进程 等待所有goroutine退出
-	lineChan chan string     // 传递文件行数据
+	wg              *sync.WaitGroup // 阻塞主进程 等待所有goroutine退出
+	lineChan        chan string     // 传递文件行数据
+	fileReadDoneCnt int             // 文件读取完成数量
 }
 
 func main() {
@@ -62,11 +70,12 @@ func main() {
 	srcFileNames := []string{}
 
 	wg := &sync.WaitGroup{}
-	lineChan := make(chan string, 1024*256) // 设置缓冲区大小 需要斟酌 保证一直有剩余空间可写
+	lineChan := make(chan string, 1024*1024) // 设置缓冲区大小 需要斟酌 保证一直有剩余空间可写
 
 	mfs := &mergeFileStruct{
-		wg:       wg,
-		lineChan: lineChan,
+		wg:              wg,
+		lineChan:        lineChan,
+		fileReadDoneCnt: 0,
 	}
 
 	mfs.consumer(ctx, dstFileName)
